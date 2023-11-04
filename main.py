@@ -1,80 +1,102 @@
+import asyncio
 import discord
 from discord.ext import commands
 import youtube_dl
-import asyncio
 
-intents = discord.Intents.default()
-intents.typing = False
+# Define your Discord token here
+DISCORD_TOKEN = "token"
 
-# Enable the GUILD_MEMBERS and PRESENCE_INTENT privileged intents
-intents.members = True
-intents.presences = True
+# Initialize the bot with specified intents
+intents = discord.Intents().all()
+bot = commands.Bot(command_prefix='!', intents=intents)
 
-bot = commands.Bot(command_prefix='$', intents=intents)
+youtube_dl.utils.bug_reports_message = lambda: ''
 
 ytdl_format_options = {
     'format': 'bestaudio/best',
+    'restrictfilenames': True,
+    'noplaylist': True,
+    'nocheckcertificate': True,
+    'ignoreerrors': False,
+    'logtostderr': False,
     'quiet': True,
+    'no_warnings': True,
+    'default_search': 'auto',
+    'source_address': '0.0.0.0',  # bind to ipv4 since ipv6 addresses cause issues sometimes
+    'noupdate': True  # Add this line to bypass the "Unable to extract uploader id" error
+}
+
+
+
+ffmpeg_options = {
+    'options': '-vn'
 }
 
 ytdl = youtube_dl.YoutubeDL(ytdl_format_options)
-
 
 class YTDLSource(discord.PCMVolumeTransformer):
     def __init__(self, source, *, data, volume=0.5):
         super().__init__(source, volume)
         self.data = data
         self.title = data.get('title')
+        self.url = ""
 
     @classmethod
-    async def from_url(cls, url, *, loop=None):
+    async def from_url(cls, url, *, loop=None, stream=False):
         loop = loop or asyncio.get_event_loop()
-        info = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=False))
-        if 'entries' in info:
-            info = info['entries'][0]
-        url2 = info['url']
-        return cls(discord.FFmpegPCMAudio(executable="ffmpeg", source=url2), data=info)
+        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
+        if 'entries' in data:
+            # take first item from a playlist
+            data = data['entries'][0]
+        filename = data['title'] if stream else ytdl.prepare_filename(data)
+        return filename
 
-
-@bot.event
-async def on_ready():
-    print(f'Logged in as {bot.user.name}')
-
-    # Replace 'YOUR_VOICE_CHANNEL_ID' with the ID of the voice channel you want the bot to join.
-    voice_channel = bot.get_channel(777770716090204177)
-
-    if voice_channel:
-        vc = await voice_channel.connect()
-        print(f'Joined {voice_channel}')
-
-
-@bot.command(name='play', help='Play a song from YouTube or SoundCloud')
+@bot.command(name='play', help='To play a song')
 async def play(ctx, url):
-    # Check if the user is in a voice channel
-    if not ctx.author.voice:
-        await ctx.send("You need to be in a voice channel to use this command.")
+    server = ctx.message.guild
+    voice_channel = server.voice_client
+
+    async with ctx.typing():
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'noplaylist': True,
+        }
+
+        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+            info_dict = ydl.extract_info(url, download=False)
+            url2 = info_dict.get("url")
+
+        if voice_channel.is_playing():
+            voice_channel.stop()
+
+        voice_channel.play(discord.FFmpegPCMAudio(url2))
+        await ctx.send('**Now playing:** {}'.format(info_dict.get("title")))
+
+@bot.command(name='join', help='Tells the bot to join the voice channel')
+async def join(ctx):
+    if not ctx.message.author.voice:
+        await ctx.send("{} is not connected to a voice channel".format(ctx.message.author.name))
         return
-
-    print(f'Command recognized: !play {url}')  # Add this line for debugging
-
-    # Get the voice channel of the user
-    voice_channel = ctx.author.voice.channel
-
-    # Check if the bot is already in a voice channel
-    if ctx.voice_client is None:
-        # Connect to the user's voice channel
-        vc = await voice_channel.connect()
     else:
-        # Use the existing voice connection
-        vc = ctx.voice_client
+        channel = ctx.message.author.voice.channel
+    await channel.connect()
 
-    # Create an instance of YTDLSource and play the audio
-    source = await YTDLSource.from_url(url, loop=bot.loop)
-    vc.play(source)
+@bot.command(name='leave', help='To make the bot leave the voice channel')
+async def leave(ctx):
+    voice_client = ctx.message.guild.voice_client
+    if voice_client.is_connected():
+        await voice_client.disconnect()
+    else:
+        await ctx.send("The bot is not connected to a voice channel.")
 
-    # Send a confirmation message
-    await ctx.send(f'Now playing: {source.title}')
-
+@bot.command(name='stop', help='Stops the song')
+async def stop(ctx):
+    voice_client = ctx.message.guild.voice_client
+    if voice_client.is_playing():
+        await voice_client.stop()
+    else:
+        await ctx.send("The bot is not playing anything at the moment.")
 
 if __name__ == "__main__":
-    bot.run("")
+    bot.run(DISCORD_TOKEN)
+

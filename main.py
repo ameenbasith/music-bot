@@ -1,18 +1,26 @@
-import asyncio
 import discord
 from discord.ext import commands
 import yt_dlp
 
+# Load the Opus library (required for audio streaming in Discord)
 discord.opus.load_opus('/opt/homebrew/bin/opusenc')
 
 # Define your Discord token here
-DISCORD_TOKEN = "INSERT TOKEN"
+DISCORD_TOKEN = "INSERT TOKEN HERE"
 
 # Initialize the bot with specified intents
 intents = discord.Intents().all()
 bot = commands.Bot(command_prefix='!', intents=intents)
 
+# Define a class for audio source with volume control
 class YTDLSource(discord.PCMVolumeTransformer):
+    """
+    Initialize a YTDLSource instance.
+
+    :param source: The audio source to be transformed with volume control.
+    :param data: Metadata about the source.
+    :param volume: The initial volume level (0.0 to 2.0).
+    """
     def __init__(self, source, *, data, volume=0.5):
         super().__init__(source, volume)
         self.data = data
@@ -21,6 +29,12 @@ class YTDLSource(discord.PCMVolumeTransformer):
 
 @bot.command(name='play', help='To play a song')
 async def play(ctx, url):
+    """
+    Play a song from a given URL in a voice channel.
+
+    :param ctx: The context of the command.
+    :param url: The URL of the song to be played.
+    """
     server = ctx.message.guild
     voice_channel = server.voice_client
 
